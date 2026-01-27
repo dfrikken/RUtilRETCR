@@ -37,6 +37,7 @@ charge: nC
 #include "TFile.h"
 #include "TSystemDirectory.h"
 #include "TList.h"
+#include "TBox.h"
 
 //#include "cnpy.h"
 #include "TSystemFile.h"
@@ -69,6 +70,7 @@ charge: nC
 #include <vector>
 #include <utility>
 #include <complex>
+#include <filesystem>
 
 //#include "RUtilGraph.hh"
 
@@ -848,6 +850,69 @@ the SVD namespace, which has useful utilities for SVD filtration methods
     TH2D * simpleWaveletTransform(TGraph *gr1, int order, int width);
     TH2D * simpleSuperletTransform(TGraph *gr1, int order, int width, int super=3);
     TGraph* morlet(double centerF, int length, int width, double dt);
+  }
+
+  namespace retcr{
+
+    using Vec3 = std::array<double, 3>;
+
+    void makeFixedArrays(double l0_dt[12], Int_t panel_medium_gain[12], double l0Fix[10], int chargeFix[10]);
+
+
+    double locMaxInRange(TGraph *ingr, double lowT, double highT);
+    double maxInRange(TGraph *ingr, double lowT, double highT);
+    TGraph * impulsivityGraph(TGraph *ingr);
+
+    TGraph * trimForFFT(TGraph *ingr, UInt_t holdoff);
+    TGraph * trimForRecord(TGraph *ingr, UInt_t holdoff,int channel);
+    //TGraph * butterworth(TGraph *ingr, double freqMin, double freqMax, int order);
+
+
+    TGraph * butterworthLowPass(const TGraph* gIn, double fc, int order);
+    TGraph * butterworthHighPass(const TGraph* gIn, double fc, int order);
+    TGraph * butterworthBandPass(TGraph *ingr, double low, double high, int order);
+    
+
+    vector<TGraph*> makeGraphs(Double_t t_d[16384],Double_t allDat[5][16384], Double_t trigger_point_ns, Double_t read_point_ns, Double_t fs);
+    TGraph * crossCorrelateWindowed(TGraph * gr1, TGraph * gr2, TGraph *grWindow, double max_delay, double t_low, double t_high);
+    TGraph * removeFreqs(TGraph *ingr,double tx_freq, double TxOn = 1, int ref=0);
+
+
+    void lightTravelTimeToPoint(TVector3 intPoint, double indRef, double dtArr[4]);
+    void getCoreSignalToRxWithRef(double xVal, double yVal, double l0_dt[12], double theta, double coreSignalToRx[4]);
+
+    double snells(double zenith, double n2);
+    double dot(const Vec3& a, const Vec3& b);
+
+    Vec3 operator-(const Vec3& a, const Vec3& b);
+
+
+double findPlaneIntersectionTime(const Vec3& point, const Vec3& planePos0, const Vec3& planeVel, const Vec3& normal);
+
+
+    double planeIntersectionTime(TVector3 checkPoint, TVector3 firstPanelPos , double theta, double phi, double firstPanelTime);
+    void getCoreSignalToRx(TVector3 checkPoint, TVector3 firstPanelPos , double theta, double phi, double coreSignalToRx[4], double firstPanelTime);
+    double getFirstPanelTime(double l0_dt[12]);
+    TVector3 getFirstPanelTVector3(double l0_dt[12]);
+    double getAirEmissionArrivalTime(int antenna, double theta, double phi, TVector3 firstPanelVec, double firstPanelTime);
+
+    vector<TBox*> makePanelEmmisionBoxes( double l0_dt[12] ,int antenna, double highV, double lowV, double indRef, double shiftTime);
+
+    void minThetaPhi(double l0Fix[10], TVector3 firstPanelVec, double firstPanelTime, double thetaPhi[3]);
+
+    TGraph * newPowerAtCarrier(TGraph *ingr, double tx_freq);
+    TGraph * powerAtCarrierSlow(TGraph *ingr, double tx_freq);
+
+    TGraph * removeCWSideband(TGraph *ingr, TGraph *fullGraph, double freq);
+    TGraph * removeFreqsSideband(TGraph *ingr,double tx_freq, double TxOn = 1, int ref=0, int nSamplesToChunk=3000);
+
+    vector<TGraph*> rollingWindow(TGraph *g);
+
+    vector<TGraph*> delayedForTxBlip(vector<TGraph*> ingr);
+    TGraph * addPower(vector<TGraph*> ingr, int normStyle = 0);
+    void newThetaPhiMinimizer(double l0Fix[10], TVector3 firstPanelVec, double firstPanelTime, double thetaPhi[3]);
+    vector<TString> getDirList(std::string path);
+
   }
 
 }

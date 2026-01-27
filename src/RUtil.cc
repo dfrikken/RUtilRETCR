@@ -4882,3 +4882,1317 @@ TGraph* RUtil::wavelet::morlet(double centerF, int length, int width, double dt)
   delete cw;
   return windowedCW;
 }
+
+/*
+#############################
+retcr start
+######################
+*/
+
+void RUtil::retcr::makeFixedArrays(double l0_dt[12], Int_t panel_medium_gain[12], double l0Fix[10], int chargeFix[10]){
+    double l0Remove44[10];
+    int chargeRemove44[10];
+    int ind = 0;
+    for(int i =0;i<12;i++){
+        if(i ==6 or i==7){continue;}
+        //cout<<"panel "<<ind+1<<"  "<<l0_dt[i]<<endl;
+        l0Remove44[ind] = l0_dt[i];
+        chargeRemove44[ind] = panel_medium_gain[i];
+        ind++;
+    }
+    
+
+    int correctInd[10] = {0,1,3,2,4,5,7,6,9,8};
+    for(int i =0;i<10;i++){
+        l0Fix[correctInd[i]] = l0Remove44[i];
+        chargeFix[correctInd[i]] = chargeRemove44[i];
+    }
+}
+
+double RUtil::retcr::locMaxInRange(TGraph *ingr, double lowT, double highT){
+    double *x = ingr->GetX();
+    double *y = ingr->GetY();
+
+    
+    //double xx[1500] = {0};
+    //double yy[1500] = {0};
+    vector<double> xx,yy;
+    
+    int counter = 0;
+    for(int i =0;i<ingr->GetN();i++){
+        if( x[i] > lowT and x[i] < highT){
+            //xx[counter] = x[i];
+            //yy[counter] = y[i];
+            //counter++;
+            xx.push_back(x[i]);
+            yy.push_back(y[i]);
+            
+        }
+        if(x[i] > highT){break;}
+    }
+    //auto totalMax = *std::max_element( yy.begin(), yy.end() );
+    //search_closest(yy, totalMax)
+    auto peakIndex = TMath::LocMax(yy.size(),&yy[0] );
+    return xx[peakIndex];
+}
+
+double RUtil::retcr::maxInRange(TGraph *ingr, double lowT, double highT){
+    double *x = ingr->GetX();
+    double *y = ingr->GetY();
+
+    
+    //double xx[1500] = {0};
+    //double yy[1500] = {0};
+    vector<double> xx,yy;
+    
+    int counter = 0;
+    for(int i =0;i<ingr->GetN();i++){
+        if( x[i] > lowT and x[i] < highT){
+            //xx[counter] = x[i];
+            //yy[counter] = y[i];
+            //counter++;
+            xx.push_back(x[i]);
+            yy.push_back(y[i]);
+            
+        }
+        if(x[i] > highT){break;}
+    }
+    //auto totalMax = *std::max_element( yy.begin(), yy.end() );
+    //search_closest(yy, totalMax)
+    auto peakIndex = TMath::LocMax(yy.size(),&yy[0] );
+    return yy[peakIndex];
+}
+
+TGraph *RUtil::retcr::impulsivityGraph(TGraph *ingr){
+    auto powerPlot = RUtil::power(ingr);
+    auto normed = RUtil::normalize(ingr);
+
+    TGraph *runningSum  = new TGraph();
+    double totalVal = 0;
+    for(int i =0;i< ingr->GetN() ;i++){
+        totalVal+= ingr->GetY()[i];
+        runningSum->SetPoint(i, ingr->GetX()[i], totalVal);
+    }
+
+    auto der = RUtil::derivative(runningSum);
+    auto absPlot = RUtil::absGraph(der);
+
+    delete powerPlot;
+    delete normed;
+    delete runningSum;
+    delete der;
+    return absPlot;
+    
+}
+
+
+TGraph* RUtil::retcr::trimForFFT(TGraph *ingr, UInt_t holdoff){
+    auto xx = ingr->GetX();
+    double highT =  ingr->GetX()[16384/2] + (holdoff*(1/0.36864));
+
+    int highSamp = 0;
+    for(int i =0;i<ingr->GetN();i++){
+            if( ingr->GetX()[i] >= highT){
+                highSamp = i-1;
+                break;
+            }
+    }
+
+    auto outGr = RUtil::getTheseSamples( ingr, highSamp-8192, highSamp, 0);
+
+    return outGr;
+
+}
+
+TGraph* RUtil::retcr::trimForRecord(TGraph *ingr, UInt_t holdoff,int channel){
+    int colorVal[5] = {kBlue,kCyan+1,6,kViolet,kGreen+1};
+    auto dt = ingr->GetX()[10] - ingr->GetX()[9];
+
+    if (holdoff > 400){ holdoff = 400;}
+    double highT =  ingr->GetX()[16384/2] + (holdoff*(1/0.36864));
+    double lowT =  1692.7083;
+
+    TGraph *g = new TGraph();
+
+    for(int i =0;i< ingr->GetN();i++){
+        if( ingr->GetX()[i] >= lowT){
+            g->SetPoint(g->GetN(), ingr->GetX()[i] - lowT, ingr->GetY()[i]);
+        }
+    }
+
+    while(g->GetN() < 6400){
+        g->SetPoint( g->GetN(), g->GetX()[g->GetN()-1] + dt,0);
+    }
+    
+    g->SetName(TString::Format("CH %d", channel));
+    g->SetTitle(TString::Format("CH %d", channel));
+    g->GetYaxis()->SetTitle("ADC counts");
+    g->GetXaxis()->SetTitle("time (ns)");
+    g->SetLineColor(colorVal[channel]);
+    g->SetMarkerColor(colorVal[channel]);
+    g->SetLineWidth(1);
+    //g->SetMarkerStyle(6);
+    //g->SetMarkerSize(0.01);
+    
+    return g;
+
+}
+
+TGraph* RUtil::retcr::butterworthLowPass(const TGraph* gIn, double fc, int order)
+{
+    if (!gIn || order < 1 || fc <= 0.0) {
+        ::Error("ButterworthFilter_HighPass", "Invalid input (null graph, order<1, or fc<=0).");
+        return nullptr;
+    }
+    const int Npts = gIn->GetN();
+    if (Npts < 2) {
+        ::Error("ButterworthFilter_HighPass", "Graph must have >= 2 points.");
+        return nullptr;
+    }
+    std::vector<double> t(Npts), x_in(Npts);
+    for (int i = 0; i < Npts; ++i) gIn->GetPoint(i, t[i], x_in[i]);
+    //Assumes Uniform Sampling
+    double dt = (t.back() - t.front()) / (Npts - 1);
+    if (dt <= 0) {
+        ::Error("ButterworthFilter_LowPass", "Non-positive sampling period estimated.");
+        return nullptr;
+    }
+    double fs = 1.0 / dt;
+    // Nyquist-normalized check and pre-warping constant K
+    if (fc >= fs/2.0) {
+        ::Warning("ButterworthFilter_LowPass", "Cutoff >= Nyquist. Limiting to 0.99*Nyquist.");
+        fc = 0.99*(fs/2.0);
+    }
+    const double K = tan(M_PI * fc / fs);
+    const double K2 = K * K;
+    // Working buffers
+    std::vector<double> buf = x_in;
+    std::vector<double> tmp(Npts, 0.0);
+    // Number of 2nd-order sections
+    int n_biquads = order / 2;
+    // Source
+    //https://docs.nxp.com/bundle/AN14627/page/topics/biquad.html
+    //Angle comes from normalized butterworth polynomials from
+    // https://en.wikipedia.org/wiki/Butterworth_filter
+    for (int m = 1; m <= n_biquads; ++m) {
+        double angle = M_PI * (2.0 * m + order - 1.0) / (2.0 * order);
+        double a1_analog = -2.0 * cos(angle);
+        // High-pass bilinear transform coefficients
+        // numerator: [K^2, 2K^2, K^2]
+        // denominator: [1 + a1*K + K^2, 2*(K^2 - 1), 1 - a1*K + K^2]
+        double b0p = K2;
+        double b1p = 2*K2;
+        double b2p = K2;
+        double a0p = 1.0 + a1_analog * K + K2;
+        double a1p = 2.0 * (K2 - 1.0);
+        double a2p = 1.0 - a1_analog * K + K2;
+        // normalize so a0 = 1
+        double b0 = b0p / a0p;
+        double b1 = b1p / a0p;
+        double b2 = b2p / a0p;
+        double a1 = a1p / a0p;
+        double a2 = a2p / a0p;
+        // filter section (Direct Form I)
+	// Source https://en.wikipedia.org/wiki/Digital_biquad_filter
+        double xm1 = 0.0, xm2 = 0.0;
+        double ym1 = 0.0, ym2 = 0.0;
+        for (int i = 0; i < Npts; ++i) {
+            double xn = buf[i];
+            double yn = b0 * xn + b1 * xm1 + b2 * xm2 - a1 * ym1 - a2 * ym2;
+            tmp[i] = yn;
+            xm2 = xm1; xm1 = xn;
+            ym2 = ym1; ym1 = yn;
+        }
+        buf = tmp;
+        std::fill(tmp.begin(), tmp.end(), 0.0);
+    }
+    // Odd order: remaining 1st-order section
+    if (order % 2 == 1) {
+        // High-pass first-order section:
+        // b' = [1, -1]
+        // a' = [1 + K, K - 1]
+        double b0p = 1.0;
+        double b1p = -1.0;
+        double a0p = 1.0 + K;
+        double a1p = K - 1.0;
+        double b0 = b0p / a0p;
+        double b1 = b1p / a0p;
+        double a1 = a1p / a0p;
+        double xm1 = 0.0;
+        double ym1 = 0.0;
+        for (int i = 0; i < Npts; ++i) {
+            double xn = buf[i];
+            double yn = b0 * xn + b1 * xm1 - a1 * ym1;
+            tmp[i] = yn;
+            xm1 = xn;
+            ym1 = yn;
+        }
+        buf = tmp;
+    }
+    // Output
+    TGraph* gOut = new TGraph(Npts);
+    for (int i = 0; i < Npts; ++i)
+        gOut->SetPoint(i, t[i], buf[i]);
+    gOut->SetTitle(Form("Butterworth Low-pass filter (fc=%.3f, order=%d)", fc, order));
+    return gOut;
+}
+
+TGraph* RUtil::retcr::butterworthHighPass(const TGraph* gIn, double fc, int order)
+{
+    if (!gIn || order < 1 || fc <= 0.0) {
+        ::Error("ButterworthFilter_General_HighPass", "Invalid input (null graph, order<1, or fc<=0).");
+        return nullptr;
+    }
+    const int Npts = gIn->GetN();
+    std::vector<double> t(Npts), x_in(Npts);
+    for (int i = 0; i < Npts; ++i) gIn->GetPoint(i, t[i], x_in[i]);
+    // Assumes Uniform sampling
+    double dt = (t.back() - t.front()) / (Npts - 1);
+    double fs = 1.0 / dt;
+    // Nyquist-normalized check and pre-warping constant K
+    if (fc >= fs/2.0) {
+        ::Warning("ButterworthFilter_General_HighPass", "Cutoff >= Nyquist. Limiting to 0.99*Nyquist.");
+        fc = 0.99*(fs/2.0);
+    }
+    // Finding K Constant (also in the reference below)
+    const double K = tan(M_PI * fc / fs);
+    const double K2 = K * K;
+    // Working buffers
+    std::vector<double> buf = x_in;
+    std::vector<double> tmp(Npts, 0.0);
+    // Number of 2nd-order sections
+    int n_biquads = order / 2;
+    //https://docs.nxp.com/bundle/AN14627/page/topics/biquad.html
+    //Angle comes from normalized butterworth polynomials from
+    // https://en.wikipedia.org/wiki/Butterworth_filter
+    for (int m = 1; m <= n_biquads; ++m) {
+        double angle = M_PI * (2.0 * m + order - 1.0) / (2.0 * order);
+        double a1_analog = -2.0 * cos(angle);
+        // High-pass bilinear transform coefficients
+        // numerator: [1, -2, 1]
+        // denominator: [1 + a1*K + K^2, 2*(K^2 - 1), 1 - a1*K + K^2]
+        double b0p = 1.0;
+        double b1p = -2.0;
+        double b2p = 1.0;
+        double a0p = 1.0 + a1_analog * K + K2;
+        double a1p = 2.0 * (K2 - 1.0);
+        double a2p = 1.0 - a1_analog * K + K2;
+        // normalize so a0 = 1
+        double b0 = b0p / a0p;
+        double b1 = b1p / a0p;
+        double b2 = b2p / a0p;
+        double a1 = a1p / a0p;
+        double a2 = a2p / a0p;
+        // filter section (Direct Form I)
+	// Source https://en.wikipedia.org/wiki/Digital_biquad_filter
+        double xm1 = 0.0, xm2 = 0.0;
+        double ym1 = 0.0, ym2 = 0.0;
+        for (int i = 0; i < Npts; ++i) {
+            double xn = buf[i];
+            double yn = b0 * xn + b1 * xm1 + b2 * xm2 - a1 * ym1 - a2 * ym2;
+            tmp[i] = yn;
+            xm2 = xm1; xm1 = xn;
+            ym2 = ym1; ym1 = yn;
+        }
+        buf = tmp;
+        std::fill(tmp.begin(), tmp.end(), 0.0);
+    }
+    // Odd order: remaining 1st-order section
+    if (order % 2 == 1) {
+        // High-pass first-order section:
+        // b' = [1, -1]
+        // a' = [1 + K, K - 1]
+        double b0p = 1.0;
+        double b1p = -1.0;
+        double a0p = 1.0 + K;
+        double a1p = K - 1.0;
+        double b0 = b0p / a0p;
+        double b1 = b1p / a0p;
+        double a1 = a1p / a0p;
+        double xm1 = 0.0;
+        double ym1 = 0.0;
+        for (int i = 0; i < Npts; ++i) {
+            double xn = buf[i];
+            double yn = b0 * xn + b1 * xm1 - a1 * ym1;
+            tmp[i] = yn;
+            xm1 = xn;
+            ym1 = yn;
+        }
+        buf = tmp;
+    }
+    // Output
+    TGraph* gOut = new TGraph(Npts);
+    for (int i = 0; i < Npts; ++i)
+        gOut->SetPoint(i, t[i], buf[i]);
+    gOut->SetTitle(Form("Butterworth High-pass filter (fc=%.3f, order=%d)", fc, order));
+    return gOut;
+}
+
+TGraph *RUtil::retcr::butterworthBandPass( TGraph *ingr, double low, double high, int order){
+
+    TGraph *lp = RUtil::retcr::butterworthLowPass(ingr, high, order);
+    TGraph *hp = RUtil::retcr::butterworthHighPass(lp, low, order);
+
+    delete lp;
+
+    return hp;
+}
+
+
+/*
+TGraph* RUtil::retcr::butterworth(TGraph *ingr, double freqMin, double freqMax, int order){
+    auto fftG = RUtil::FFT::fft(ingr);
+    
+    double *freqs = fftG->GetX();
+    double *vmReal = fftG->GetY();
+    double *vmImg = fftG->GetZ();
+
+    for(int i =0;i<fftG->GetN();i++){
+        double weight = 1;
+          // Setting initial weight to one, then applying bandpass.  Weight is then multiplied by signal in this bin.
+        weight /= sqrt(1 + TMath::Power(freqMin/freqs[i], 4*order));
+        weight /= sqrt(1 + TMath::Power(freqs[i]/freqMax, 4*order));
+        vmReal[i] = vmReal[i] * weight;
+        vmImg[i] =vmImg[i]* weight;
+    }
+
+    TGraph2D *butterFFT = new TGraph2D();
+
+    
+    for(int i =0;i< fftG->GetN();i++){
+        butterFFT->SetPoint( butterFFT->GetN(), freqs[i], vmReal[i], vmImg[i]);
+    }
+
+    auto outg = (TGraph*)RUtil::FFT::ifft(butterFFT)->Clone();
+
+    //delete fftG;
+    fftG->Clear();
+    delete butterFFT;
+    
+    //delete butterFFT;
+    auto outgr = RUtil::delayGraph(outg, ingr->GetX()[0]);
+    delete outg;
+    return outgr;
+    
+}
+*/
+
+
+
+vector<TGraph*> RUtil::retcr::makeGraphs(Double_t t_d[16384],Double_t allDat[5][16384], Double_t trigger_point_ns, Double_t read_point_ns, Double_t fs){
+    vector<TGraph*> graphs;
+    for(int ant =0;ant<5;ant++){
+        //if (ant ==2){continue;}
+        auto gr=new TGraph(16384, t_d, allDat[ant]);
+        auto grRoll = RUtil::roll(gr,trigger_point_ns*fs - (16384/2) );
+
+        //auto chunk = RUtil::getNSamplesFrom(grRoll,grRoll->GetX()[16384/2-3200], 6400,1 );
+        graphs.push_back(grRoll);
+        //delete grRoll;
+        delete gr;
+        gr = NULL;
+    }
+
+    //auto gr=new TGraph(16384, t_d, allDat[2]);
+    //auto grRoll = RUtil::roll(gr,trigger_point_ns*fs - (16384/2) );
+
+    //auto chunk = RUtil::getNSamplesFrom(grRoll,grRoll->GetX()[16384/2-3200], 6400,1 );
+    //graphs.push_back(grRoll);
+    //delete gr;dt
+    //gr = NULL;
+    
+  return graphs;
+    
+}
+
+TGraph* RUtil::retcr::crossCorrelateWindowed(TGraph * gr1, TGraph * gr2, TGraph *grWindow, double max_delay, double t_low, double t_high){
+  double *x = gr1->GetY();
+  double *time=gr1->GetX();
+  double *y = gr2->GetY();
+  double *window = grWindow->GetY();
+  int yn=gr1->GetN();
+  int xn=gr2->GetN();
+
+  int lengthx=xn;
+  int lengthy=yn;
+  int length=0;
+  vector<double> out, outx, outy;
+  double num, ynum, xdenom, ydenom, denom;
+  double timescale = time[1]-time[0];
+
+  length=lengthx<=lengthy?xn:yn;
+  length=lengthx<=lengthy?xn:yn;
+  double throwaway=time[xn-1]/10.;//throw away highest delays, they are unstable
+  max_delay=max_delay>time[xn-1]?time[xn-1]-throwaway:max_delay;
+
+  t_high=t_high>=time[xn-1]?time[xn-1]:t_high;
+  t_low=t_low<0.?0.:t_low;
+
+  int max_delay_index=(1./timescale)*max_delay;
+  double mx=0;
+  double my=0;
+
+
+  int n=0;
+  double t=-max_delay;
+  for(int n=-max_delay_index;n<max_delay_index;n++){
+    //if(time[d]>=-max_delay&&time[d]<=max_delay){
+      num=0.;
+      xdenom=0.;
+      ydenom=0.;
+      for(int i=0;i<length;i++){
+	if((i+n)>0 && (i+n)<length && time[i]>=t_low && time[i]<=t_high){
+	  
+	  num+=(x[i-n]-mx)*(y[i+n]-my)*window[i];
+	  xdenom+=pow(x[i-n]-mx, 2)*window[i];
+	  ydenom+=pow(y[i+n]-my, 2)*window[i];
+	  
+	}
+      }
+      out.push_back(num/sqrt(xdenom*ydenom));
+      outx.push_back((double)n *timescale);
+      //outx.push_back(time[(length/2)-n]);
+      //    n++;    
+    }
+
+
+  
+  TGraph *outt = new TGraph(outx.size(), &outx[0], &out[0]);
+    outt->GetXaxis()->SetRangeUser(-max_delay, max_delay);
+    outt->GetXaxis()->SetTitle("offset (ns)");
+    outt->GetYaxis()->SetTitle("CC coefficient");
+    outt->GetYaxis()->SetTitleOffset(1.15);
+  return outt;
+}
+
+TGraph* RUtil::retcr::removeFreqs(TGraph *ingr,double tx_freq, double TxOn, int ref){
+    //TGraph outG = new TGraph();
+    if(ref ==1){
+        if(TxOn!=0){
+            auto rc0 = RUtil::removeCW(ingr, tx_freq*3); //remove the tx harmonic
+            auto rc = RUtil::removeCW(rc0, tx_freq*2); //remove the tx harmonic
+            auto rc1 = RUtil::removeCW(rc, 0.36864); //remove the DAQ CPU clock freq
+            auto outG = RUtil::removeCW(rc1, tx_freq); //remove the tx
+            auto outgr = RUtil::delayGraph(outG, ingr->GetX()[0]);
+            delete outG;
+            delete rc;
+            delete rc1;
+            delete rc0;
+            return outgr;
+        }
+        if(TxOn ==0){
+            auto outG = RUtil::removeCW(ingr, 0.36864);
+            auto outgr = RUtil::delayGraph(outG, ingr->GetX()[0]);
+            delete outG;
+            return outgr;
+        }
+    }
+    if(ref ==0){
+        if(TxOn>0){
+            auto rc1 = RUtil::removeCW(ingr, 0.36864);
+            auto outG = RUtil::removeCW(rc1, tx_freq*2); //remove the tx harmonic
+            delete rc1;
+            auto outgr = RUtil::delayGraph(outG, ingr->GetX()[0]);
+            delete outG;
+            return outgr;
+        }
+        if(TxOn ==0){
+            auto rc1 = RUtil::removeCW(ingr, 0.36864);
+            auto outgr = RUtil::delayGraph(rc1, ingr->GetX()[0]);
+            delete rc1;
+            return rc1;
+        }
+
+    }
+    
+    TGraph *outG = new TGraph();
+    cout<< "error removing frequencies"<<endl;
+    return outG;
+}
+
+void RUtil::retcr::lightTravelTimeToPoint(TVector3 intPoint, double indRef, double dtArr[5]){
+    double rxPos[5][3] =  { {26.71	,14.841,-10},{-0.138, -30.367,-10},{-46.594,11.166,-10},{-26.329,15.103,-10},{1.205,14.561,-1}};
+
+    vector<TVector3> rxVect;
+
+    for(int i =0;i<5;i++){
+        TVector3 mp(rxPos[i][0], rxPos[i][1], rxPos[i][2]);
+        rxVect.push_back(mp);
+    }
+
+    for(int i =0;i<5;i++){
+        TVector3 dRx = intPoint - rxVect[i];
+        dtArr[i] = dRx.Mag()/(RUtil::c_light/indRef);
+    }
+}
+
+void RUtil::retcr::getCoreSignalToRxWithRef(double xVal, double yVal, double l0_dt[12], double theta, double coreSignalToRx[4]){
+
+
+    double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
+{46.391,-15.198},{31.191,-28.257},
+{-25.454,-31.413},{-35.032,-16.506},
+{25.66,62.593},{41.206,50.988},
+{-20.423,-64.921},{-37.798,-58.042}
+};
+    
+    TVector3 corePos(xVal, yVal, 0);
+    double travelTime[4];
+    lightTravelTimeToPoint( corePos, 1.4,travelTime);
+    double l0Remove44[10];
+    int ind = 0;
+    for(int i =0;i<12;i++){
+        if(i ==6 or i==7){continue;}
+        //cout<<"panel "<<ind+1<<"  "<<l0_dt[i]<<endl;
+        l0Remove44[ind] = l0_dt[i];
+        ind++;
+    }
+    
+    double l0Fix[10];
+    int correctInd[10] = {0,1,3,2,4,5,7,6,9,8};
+    
+    for(int i =0;i<10;i++){
+        l0Fix[correctInd[i]] = l0Remove44[i];
+        if(l0Remove44[i] < -300){ //if the l0 is outside the causal window make it very large and postive to be easily ignored
+            l0Fix[correctInd[i]] = 10000; 
+        }
+    }
+    
+    auto minl0 = *min_element( l0Fix, l0Fix+10);
+    
+    int firstPanelHit = distance(l0Fix, find(l0Fix,l0Fix+10,minl0 ));
+    
+    
+    TVector3 toFirstPanelHit( panelPos[firstPanelHit][0], panelPos[firstPanelHit][1],0);
+    TVector3 toCore(xVal, yVal,0);
+    
+    auto D_ssCore = toFirstPanelHit - toCore;
+
+    double coreImpactTimeDiff = ( D_ssCore.Mag() *( TMath::Cos( RUtil::deg2Rad(90-theta))))/RUtil::c_light + (5/RUtil::c_light) ;
+    
+    int cableLength = 80;//m -> 70 m daq to ss 10 m ss to panel
+    double vFact = .7;//cat7 cable   
+    //RUtil::c_light m/ns
+    auto l0Delay = cableLength / (RUtil::c_light * vFact);
+    
+    int rxCableLength = 50;
+    double rxVFact = .85;
+    auto rxDelay = rxCableLength / (RUtil::c_light * rxVFact);
+    
+    auto coreImpactTime = 1085 + (minl0 - l0Delay) + coreImpactTimeDiff ;
+    //double coreSignalToRx[3] ;
+    
+        for(int i =0;i<3;i++){
+            coreSignalToRx[i] = coreImpactTime + travelTime[i]+ rxDelay;
+    
+        }
+        
+    int cableLengthRef = 30;
+    rxDelay = cableLengthRef / (RUtil::c_light * rxVFact);
+    coreSignalToRx[3] = coreImpactTime + travelTime[3]+ rxDelay;
+    
+
+   
+}
+
+double RUtil::retcr::snells(double zenith, double n2){
+    auto theta1 = RUtil::deg2Rad(zenith);
+    auto theta2R = TMath::ASin((1./n2)* TMath::Sin(theta1));
+    auto theta2 = RUtil::rad2Deg(theta2R);
+
+    return theta2R;
+    
+}
+
+double RUtil::retcr::dot(const Vec3& a, const Vec3& b) {
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+
+std::array<double, 3> RUtil::retcr::operator-(const Vec3& a, const Vec3& b) {
+    return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+}
+
+
+double RUtil::retcr::findPlaneIntersectionTime(
+    const Vec3& point,   // Fixed point 
+    const Vec3& planePos0,                // Initial point on plane (Cartesian)
+    const Vec3& planeVel,                 // Plane translation velocity
+    const Vec3& normal                    // Plane normal (fixed)
+) {
+
+    Vec3 diff = point - planePos0;
+    double numerator = dot(diff, normal);
+    double denominator = dot(planeVel, normal);
+
+    for(int i =0;i<3;i++){
+        //cout<< point[i] <<","<< planePos0[i]<<endl;
+    }
+
+   // cout<< numerator<<","<<denominator<<endl;
+
+    if (denominator == 0.0) {
+        // Plane is parallel to itself during motion
+        if (numerator == 0.0)
+            return 0.0; // Already on plane
+        //else
+          //  return std::nullopt;
+    }
+
+    double t = numerator / denominator;
+    return t;
+}
+
+
+
+double RUtil::retcr::planeIntersectionTime(TVector3 checkPoint, TVector3 firstPanelPos , double theta, double phi, double firstPanelTime){
+    firstPanelPos.SetMag(firstPanelPos.Mag()+.01);
+    Vec3 positionVec = {checkPoint.X(), checkPoint.Y(), checkPoint.Z()};
+    Vec3 planePos0 = {firstPanelPos.X(), firstPanelPos.Y(), firstPanelPos.Z()};   
+
+    TVector3 normalTest( 1,1,1);
+    normalTest.SetTheta(RUtil::deg2Rad(theta));
+    normalTest.SetPhi(RUtil::deg2Rad(180+phi));
+    normalTest.SetMag(1);
+    //normalTest.Print();
+    Vec3 normal = {normalTest.X(), normalTest.Y(), normalTest.Z()};
+    Vec3 planeVel  = { -normal[0]*RUtil::c_light, -normal[1]*RUtil::c_light,-normal[2]*RUtil::c_light};
+    auto t_opt = findPlaneIntersectionTime(positionVec, planePos0, planeVel, normal);
+
+
+    
+    if (t_opt) {
+        //std::cout << "Plane intersects point at t = " << *t_opt << " seconds\n";
+        return  firstPanelTime - t_opt;
+    } else {
+        //std::cout << "Plane never intersects point.\n";
+        return 1e8;
+    }
+
+}
+
+void RUtil::retcr::getCoreSignalToRx(TVector3 checkPoint, TVector3 firstPanelPos , double theta, double phi, double coreSignalToRx[5], double firstPanelTime){
+
+    auto coreImpactTime = RUtil::retcr::planeIntersectionTime( checkPoint, firstPanelPos, theta, phi, firstPanelTime);
+    //cout<< coreImpactTime<<endl;
+    
+    int rxCableLengths[5] = {50,50,86,50,30};
+    //int rxCableLengths[5] = {50,50,70,50,30};
+    double rxVFact = .85;
+    
+    double rxDelay[5];
+    
+    for(int i =0;i<5;i++){
+        rxDelay[i] = rxCableLengths[i] / (RUtil::c_light * rxVFact);
+    }
+   
+
+    double travelTime[5];
+    RUtil::retcr::lightTravelTimeToPoint(checkPoint, 1.4, travelTime);
+    
+
+    
+    for(int i =0;i<5;i++){
+        coreSignalToRx[i] = coreImpactTime + travelTime[i]+ rxDelay[i];
+
+    }
+
+
+}
+
+double RUtil::retcr::getFirstPanelTime(double l0_dt[12]){
+    double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
+{46.391,-15.198},{31.191,-28.257},
+{-25.454,-31.413},{-35.032,-16.506},
+{25.66,62.593},{41.206,50.988},
+{-20.423,-64.921},{-37.798,-58.042}
+};
+
+    double l0Remove44[10];
+    int ind = 0;
+    for(int i =0;i<12;i++){
+        if(i ==6 or i==7){continue;}
+        l0Remove44[ind] = l0_dt[i];
+        ind++;
+    }
+    
+    double l0Fix[10];
+    int correctInd[10] = {0,1,3,2,4,5,7,6,9,8};
+    
+    for(int i =0;i<10;i++){
+        l0Fix[correctInd[i]] = l0Remove44[i];
+        if(l0Remove44[i] < -500){ //if the l0 is outside the causal window make it very large and postive to be easily ignored
+            l0Fix[correctInd[i]] = 10000; 
+        }
+    }
+    
+    auto minl0 = *min_element( l0Fix, l0Fix+10);
+    
+    int firstPanelHit = distance(l0Fix, find(l0Fix,l0Fix+10,minl0));
+
+    int cableLength = 80;//m -> 70 m daq to ss 10 m ss to panel
+    double vFact = .7;//cat7 cable   
+    //RUtil::c_light m/ns
+    auto l0Delay = cableLength / (RUtil::c_light * vFact);
+    
+
+    return 1085.0694+l0Fix[firstPanelHit] - l0Delay;
+}
+
+TVector3 RUtil::retcr::getFirstPanelTVector3(double l0_dt[12]){
+    double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
+{46.391,-15.198},{31.191,-28.257},
+{-25.454,-31.413},{-35.032,-16.506},
+{25.66,62.593},{41.206,50.988},
+{-20.423,-64.921},{-37.798,-58.042}
+};
+
+    double l0Remove44[10];
+    int ind = 0;
+    for(int i =0;i<12;i++){
+        if(i ==6 or i==7){continue;}
+        l0Remove44[ind] = l0_dt[i];
+        ind++;
+    }
+    
+    double l0Fix[10];
+    int correctInd[10] = {0,1,3,2,4,5,7,6,9,8};
+    
+    for(int i =0;i<10;i++){
+        l0Fix[correctInd[i]] = l0Remove44[i];
+        if(l0Remove44[i] < -500){ //if the l0 is outside the causal window make it very large and postive to be easily ignored
+            l0Fix[correctInd[i]] = 10000; 
+        }
+    }
+    
+    auto minl0 = *min_element( l0Fix, l0Fix+10);
+    
+    int firstPanelHit = distance(l0Fix, find(l0Fix,l0Fix+10,minl0 ));
+    
+    
+    TVector3 toFirstPanelHit( panelPos[firstPanelHit][0], panelPos[firstPanelHit][1],0);
+    //cout<< firstPanelHit<<endl;
+
+    return toFirstPanelHit;
+}
+
+double RUtil::retcr::getAirEmissionArrivalTime(int antenna, double theta, double phi, TVector3 firstPanelVec, double firstPanelTime){
+    
+    auto rxTheta = RUtil::retcr::snells( theta, 1.4);
+    double rxPos[5][3] =  { {26.71	,14.841,-10},{-0.138, -30.367,-10},{-46.594	,11.166,-10},{-26.329,15.103,-10},{1.205,14.561,-1}};
+
+    TVector3 signalImpactPoint(0,0,.1);
+    signalImpactPoint.SetTheta(rxTheta);
+    signalImpactPoint.SetPhi(RUtil::deg2Rad(180+phi));
+    
+    while( signalImpactPoint.Z()<(-rxPos[antenna][2])){
+        signalImpactPoint.SetMag(signalImpactPoint.Mag()+.01);
+    }
+    TVector3 rxVec( rxPos[antenna][0],rxPos[antenna][1],rxPos[antenna][2]);
+
+    TVector3 rxPosVec( rxVec.X()+signalImpactPoint.X(), rxVec.Y()+signalImpactPoint.Y(),0);
+    auto rxPlaneToSnellPointTime = RUtil::retcr::planeIntersectionTime(rxPosVec, firstPanelVec, theta, phi, firstPanelTime);
+
+    //cout<< rxPosVec.Mag()<<endl;
+    int rxCableLength = 50;
+    if(antenna==4){
+        rxCableLength = 30;
+    }
+    if(antenna==2){
+        rxCableLength = 86;//changed from 70m
+    }
+    double rxVFact = .85;
+    auto rxDelay = rxCableLength / (RUtil::c_light * rxVFact);
+
+    auto inIceTime = signalImpactPoint.Mag()/(RUtil::c_light/1.4);
+    //signalImpactPoint.Print();
+    //auto arrivalTime = rxPlaneToSnellPointTime+inAirTime+inIceTime+rxDelay;
+    auto arrivalTime = rxPlaneToSnellPointTime+inIceTime+rxDelay;
+
+    return arrivalTime;
+
+    
+}
+
+vector<TBox*> RUtil::retcr::makePanelEmmisionBoxes( double l0_dt[12] ,int antenna, double highV, double lowV, double indRef, double shiftTime){
+
+
+    double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
+        {46.391,-15.198},{31.191,-28.257},
+        {-25.454,-31.413},{-35.032,-16.506},
+        {25.66,62.593},{41.206,50.988},
+        {-20.423,-64.921},{-37.798,-58.042}
+        };
+    
+    double l0Remove44[10];
+    int ind = 0;
+    for(int i =0;i<12;i++){
+        if(i ==6 or i==7){continue;}
+        //cout<<"panel "<<ind+1<<"  "<<l0_dt[i]<<endl;
+        l0Remove44[ind] = l0_dt[i];
+        ind++;
+    }
+    double rxPos[5][3] =  { {26.71	,14.841,-10},{-0.138, -30.367,-10},{-46.594	,11.166,-10},{-26.329,15.103,-10},{1.205,14.561,-1}};
+   
+    double l0Fix[10];
+    
+    int correctInd[10] = {0,1,3,2,4,5,7,6,9,8};
+    //int correctInd[10] = {0,1,3,2,4,5,7,6,8,9};
+    for(int i =0;i<10;i++){
+        l0Fix[correctInd[i]] = l0Remove44[i];
+    }
+     double rxToPanel[5][10];
+    for(int ant = 0;ant<5;ant++){
+        for(int i =0;i<10;i++){
+            rxToPanel[ant][i] = sqrt( pow(panelPos[i][0]-rxPos[ant][0],2) + pow(panelPos[i][1]-rxPos[ant][1],2) + pow(rxPos[ant][2]-0,2));
+            
+        }
+    }
+    
+    int cableLength = 80;//m -> 70 m daq to ss 10 m ss to panel
+    double vFact = .7;//cat7 cable   
+    //RUtil::c_light m/ns
+    auto l0Delay = cableLength / (RUtil::c_light * vFact);
+
+    auto rxDelay =0;
+    double rxVFact = .85;
+    if(antenna !=4 && antenna!=2){
+        int rxCableLength = 50;
+        rxDelay = rxCableLength / (RUtil::c_light * rxVFact);
+    }
+    if(antenna ==4){
+        int cableLength = 30;
+        rxDelay = cableLength / (RUtil::c_light * rxVFact);
+    }
+    if(antenna ==2){
+        int cableLength = 86;//changed from 70m
+        rxDelay = cableLength / (RUtil::c_light * rxVFact);
+    }
+    
+    
+    
+    vector<TBox*> panelEmmisionBoxes;
+    //for(int ant = 0;ant<3;ant++){
+            //cout<< ant<<endl;
+            for(int i =0;i<10;i++){
+                auto trigTime = (1085 - l0Delay) + l0Fix[i];
+                auto rfToRx = rxToPanel[antenna][i]/(RUtil::c_light/indRef);
+
+                if( (trigTime + rfToRx + rxDelay +shiftTime > 0) && (trigTime + rfToRx + rxDelay +shiftTime < 2100)){
+
+                    
+                    printf("Ch %d panel %d time %.2f distance = %.2f \n", antenna, i, trigTime + rfToRx + rxDelay +shiftTime,rxToPanel[antenna][i] );
+                        TBox *f = new TBox(trigTime + rfToRx + rxDelay-11 +shiftTime, lowV,trigTime + rfToRx + rxDelay+11+shiftTime,highV);
+                    f->SetFillColorAlpha(int(kViolet+2*(i*1.5)), .05+(5/rxToPanel[antenna][i]));
+                    panelEmmisionBoxes.push_back(f);
+                    TBox *f2 = new TBox(trigTime + rfToRx + rxDelay-11+100 +shiftTime, lowV,trigTime + rfToRx + rxDelay+11+shiftTime+100,highV);
+                    f2->SetFillColorAlpha(int(kViolet+2*(i*1.5)), .05+(5/rxToPanel[antenna][i]));
+                    //panelEmmisionBoxes.push_back(f2);
+                }
+                //}
+            }
+        //}
+    cout<<endl;
+
+    return panelEmmisionBoxes;
+    
+    
+}
+
+    void RUtil::retcr::minThetaPhi(double l0Fix[10], TVector3 firstPanelVec, double firstPanelTime, double thetaPhi[3]){
+
+    double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
+{46.391,-15.198},{31.191,-28.257},
+{-25.454,-31.413},{-35.032,-16.506},
+{25.66,62.593},{41.206,50.988},
+{-20.423,-64.921},{-37.798,-58.042}
+};
+
+    TGraph2D *minLoss = new TGraph2D();
+    int cableLength = 80;//m -> 70 m daq to ss 10 m ss to panel
+    double vFact = .7;//cat7 cable   
+    auto l0Delay = cableLength / (RUtil::c_light * vFact);
+    
+    for(int thetaI = 0; thetaI < 600;thetaI++){
+        //if((theta +(thetaI*.1)) > 45. || (theta +(thetaI*.1)) < 0){continue;}
+        for(int phiI = 0;phiI < 720;phiI++){
+            //if((phi+(phiI*.1) > 360 || (phi+(phiI*.1))< 0.)){continue;}
+            double panelDiff = 0;
+            for(int i =0;i<10;i++){
+                TVector3 corePos(panelPos[i][0], panelPos[i][1], 0);
+                if (l0Fix[i] > -500){
+                    auto calcTime =  l0Delay+RUtil::retcr::planeIntersectionTime(corePos, firstPanelVec, (thetaI*.1),(phiI*.5), firstPanelTime);
+                    auto loss = calcTime - (l0Fix[i]+ 1085.07);
+                    panelDiff+=abs(loss);
+              
+    
+                }
+            }
+            minLoss->SetPoint(minLoss->GetN(),(phiI*.5),(thetaI*.1),( panelDiff));
+    
+        }
+    }
+    double *zz = minLoss->GetZ();
+    auto minZ = *min_element(zz, zz+minLoss->GetN()); 
+    auto minIndex = distance(zz, find(zz, zz +minLoss->GetN(), minZ));   
+    auto minTheta = minLoss->GetY()[minIndex];
+    auto minPhi = minLoss->GetX()[minIndex];
+
+    thetaPhi[0] = minTheta;
+    thetaPhi[1] = minPhi;
+    thetaPhi[2] = minZ;
+
+    delete minLoss;
+    
+
+}
+
+TGraph *RUtil::retcr::newPowerAtCarrier(TGraph *ingr, double tx_freq){
+    //auto s = RUtil::FFT::spectrogram( ingr,128,128-16,512,0,0,0.,.35);
+    auto s = RUtil::FFT::spectrogram( ingr,64,64-2,512,0,0,0.,.35);
+    TGraph *out = new TGraph();
+
+    auto txFreqBin = 0;
+    for(int i =0;i< s->GetNbinsY();i++){
+        if( s->GetYaxis()->GetBinLowEdge(i) < tx_freq && tx_freq < s->GetYaxis()->GetBinUpEdge(i)){
+            //cout<<i<<","<< s->GetYaxis()->GetBinCenter(i)<<endl;
+            txFreqBin=i;
+        }
+    }
+    for(int i =0;i< s->GetNbinsX();i++){
+        out->SetPoint(i, s->GetXaxis()->GetBinCenter(i), s->GetBinContent(i,txFreqBin) + s->GetBinContent(i,txFreqBin-1)+s->GetBinContent(i,txFreqBin+1)); 
+    }
+    delete s;
+    return out;
+    
+    
+}
+
+TGraph *RUtil::retcr::powerAtCarrierSlow(TGraph *sample,  double freq){
+
+
+    //double high_t = sample->GetX()[6399] - ((400*(1/0.36864)) - (holdoff*(1/0.36864)));
+    //cout<<high_t<<endl;
+
+
+    //cout<<freq<<endl;
+    TGraph *g = new TGraph();
+    double * y=sample->GetY();
+    double * x=sample->GetX();
+    double dt=x[10]-x[9];
+    int N=sample->GetN();
+    double sine[N];
+    double cosine[N];
+    double sine_normalized[N];
+    double cosine_normalized[N];
+    double y_normalized[N];
+    RUtil::fillCWArray(sine, N,freq, 1, dt,0);
+    RUtil::fillCWArray(cosine, N,freq, 1,dt, RUtil::deg2Rad(90));
+    auto norm_of_y=RUtil::normalize(y_normalized,N,  y);
+    RUtil::normalize(sine_normalized, N, sine);
+    RUtil::normalize(cosine_normalized, N, cosine);
+    auto coef0=RUtil::dot(y_normalized, sine_normalized, N);
+    auto coef1=RUtil::dot(y_normalized, cosine_normalized, N);
+    //printf("sin coef %f cos coef %f\n", coef0, coef1);
+    double y_temp0[N];
+    double y_temp1[N];
+    double result[N];
+    double sine_scaled[N];
+    double cosine_scaled[N];
+    RUtil::scale(sine_scaled, N, sine_normalized, coef0);
+    RUtil::scale(cosine_scaled, N, cosine_normalized, coef1);
+    
+
+
+    TGraph *sineNormGraph = new TGraph(N, x, sine_normalized);
+    TGraph *cosNormGraph = new TGraph(N, x, cosine_normalized);
+
+    auto sincIntSine = RUtil::sincInterpolateGraphFast( sineNormGraph, 2.94912, N);
+    auto sincIntCos = RUtil::sincInterpolateGraphFast( cosNormGraph, 2.94912, N);
+
+    double *sinY = sincIntSine->GetY();
+    double *cosY = sincIntCos->GetY();
+
+
+   
+    auto intDT = sincIntSine->GetX()[10] - sincIntSine->GetX()[9];
+    
+    double S=0.;
+    double C=0.;
+    int gC = 0;
+    for(int t=0;t<sample->GetN();t++){
+
+            
+            
+            auto xPt = int(sample->GetX()[t]/intDT);
+
+            S+=(sinY[xPt]*y_normalized[t]);
+            C+=(cosY[xPt]*y_normalized[t]);
+         
+
+
+            g->SetPoint(gC, sample->GetX()[t], sqrt(S*S+C*C));
+            gC++;
+
+        
+    }
+    auto der = RUtil::derivative(g);
+
+    auto sq = RUtil::squared(der);
+    delete der;
+    delete g;
+    delete sincIntSine;
+    delete sincIntCos;
+    return sq;
+
+}
+
+TGraph * RUtil::retcr::removeCWSideband(TGraph *ingr, TGraph *fullGraph, double freq){
+    //auto bw = RUtil::brickWallFilter(ingr, freq-.001,freq+.001);;//RUtil::bandpassFilter(ingr, freq-.0001, freq+.0001);
+    
+  double * y=ingr->GetY();
+  double * x=ingr->GetX();
+  double dt=x[10]-x[9];
+  int N=ingr->GetN();
+    //printf("n is %d\n", N);
+  double sine[N];
+  double cosine[N];
+  double sine_normalized[N];
+  double cosine_normalized[N];
+  double y_normalized[N];
+  RUtil::fillCWArray(sine, N,freq, 1, dt,0);
+  RUtil::fillCWArray(cosine, N,freq, 1,dt, RUtil::deg2Rad(90));
+  auto norm_of_y=RUtil::normalize(y_normalized,N,  y);
+  RUtil::normalize(sine_normalized, N, sine);
+  RUtil::normalize(cosine_normalized, N, cosine);
+  auto coef0=RUtil::dot(y_normalized, sine_normalized, N);//* RUtil::dot(y_normalized, sine_normalized, N)* RUtil::dot(y_normalized, sine_normalized, N);
+  auto coef1=RUtil::dot(y_normalized, cosine_normalized, N);//* RUtil::dot(y_normalized, cosine_normalized, N)* RUtil::dot(y_normalized, cosine_normalized, N);
+    //printf("sin coef %f cos coef %f\n", coef0, coef1);
+    //printf("sin cos quad %f\n", sqrt(coef0*coef0 + coef1*coef1));
+    //cout<<coef0<<","<<coef1<<endl;
+    int N2 = fullGraph->GetN();
+    
+      double * yFull=fullGraph->GetY();
+      double * xFull=fullGraph->GetX();
+    
+    double y_normalizedFull[N2];
+    auto norm_of_yFull=RUtil::normalize(y_normalizedFull,N2,  yFull);
+    auto yAmp = *std::max_element( y_normalized, y_normalized + N );
+    auto yFullAmp =  *std::max_element( yFull, yFull + N );
+    
+
+    
+    double scaleFact = yAmp/yFullAmp;
+
+    for(int i=0;i<N2;i++){
+        y_normalizedFull[i]=yFull[i]*scaleFact;
+
+      }
+    
+  double y_temp0[N2];
+  double y_temp1[N2];
+  double result[N2];
+  double sine_scaled[N2];
+  double cosine_scaled[N2];
+    auto sinAmp = *std::max_element( sine_normalized, sine_normalized + N );
+    auto cosAmp = *std::max_element( cosine_normalized, cosine_normalized + N );
+
+    RUtil::fillCWArray(sine_scaled, N2, freq, sinAmp,dt, 0);
+    RUtil::fillCWArray(cosine_scaled, N2, freq, cosAmp,dt, RUtil::deg2Rad(90));
+    
+  RUtil::scale(sine_scaled, N2, sine_scaled, coef0);
+  RUtil::scale(cosine_scaled, N2, cosine_scaled, coef1);
+
+  RUtil::add(y_temp0,N2, y_normalizedFull, sine_scaled, -1);
+  RUtil::add(y_temp1,N2, y_temp0, cosine_scaled, -1);
+  RUtil::scale(result,N2, y_temp1, 1/scaleFact);
+  auto ind=RUtil::makeIndices(N2,dt);
+  auto gr=new TGraph(N2, ind, result);
+  delete ind;
+  return gr;
+  
+}
+
+TGraph* RUtil::retcr::removeFreqsSideband(TGraph *ingr,double tx_freq, double TxOn, int ref, int nSamplesToChunk){
+    //TGraph outG = new TGraph();
+    auto chunk = RUtil::getTheseSamples(ingr, 0, nSamplesToChunk,0);
+    
+    if(ref ==1){
+        if(TxOn!=0){
+            auto outG = RUtil::retcr::removeCWSideband( chunk, ingr, tx_freq);
+            auto rc = RUtil::removeCW(outG, tx_freq*2); //remove the tx harmonic
+            auto rc1 = RUtil::removeCW(rc, 0.36864); //remove the DAQ CPU clock freq
+            auto rc2 = RUtil::removeCW(rc1, tx_freq*3); //remove the tx harmonic
+            //auto outG = RUtil::removeCW(rc1, tx_freq); //remove the tx
+            
+            auto outgr = RUtil::delayGraph(rc2, ingr->GetX()[0]);
+            delete outG;
+            delete rc;
+            delete rc1;
+            delete rc2;
+            return outgr;
+        }
+        if(TxOn ==0){
+            auto outG = RUtil::removeCW(ingr, 0.36864);
+            auto outgr = RUtil::delayGraph(outG, ingr->GetX()[0]);
+            delete outG;
+            return outgr;
+        }
+    }
+    if(ref ==0){
+        if(TxOn>0){
+            auto rc1 = RUtil::removeCW(ingr, 0.36864);
+            auto outG = RUtil::removeCW(rc1, tx_freq*2); //remove the tx harmonic
+            delete rc1;
+            auto outgr = RUtil::delayGraph(outG, ingr->GetX()[0]);
+            delete outG;
+            return outgr;
+        }
+        if(TxOn ==0){
+            auto rc1 = RUtil::removeCW(ingr, 0.36864);
+            auto outgr = RUtil::delayGraph(rc1, ingr->GetX()[0]);
+            delete rc1;
+            return rc1;
+        }
+
+    }
+    delete chunk;
+    
+    TGraph *outG = new TGraph();
+    cout<< "error removing frequencies"<<endl;
+    return outG;
+}
+
+vector<TGraph*> RUtil::retcr::rollingWindow(TGraph *g){
+    int numWindows = 256;
+    vector<TGraph*> graphs;
+    for(int i =0;i<numWindows;i++){
+        auto chunk = RUtil::getTheseSamples(g, (i*25), (i+1)*25,1);
+        graphs.push_back(chunk);
+    }
+    return graphs;
+}
+
+vector<TGraph*> RUtil::retcr::delayedForTxBlip(vector<TGraph*> ingr){
+    double delays[] = { 0.0000000, 6.0000000, -224.00000,0.0000000, 0.0000000 };
+
+    vector<TGraph*> delayed;
+
+    for(int i =0;i<5;i++){
+        auto dd = RUtil::delayGraph( ingr[i], delays[i]);
+        auto zp = RUtil::zeroPad(dd,2000,1);
+        auto gg = RUtil::getChunkOfGraph(zp, 10, 2200,0);
+        delete dd;
+        delete zp;
+        delayed.push_back(gg);
+        //delayed.push_back(dd);
+    }
+
+    return delayed;
+}
+
+TGraph *RUtil::retcr::addPower(vector<TGraph*> ingr, int normStyle){
+    const int N = ingr[0]->GetN();
+
+    double yy[N];
+    double xx[N];
+    for(int j =0;j< N;j++){
+        yy[j] = 0;
+    }
+    for(int i =0;i<4;i++){
+        auto powerPlot = RUtil::power(ingr[i]);
+        TGraph *pn = new TGraph();
+        if( normStyle ==1){
+            pn = RUtil::normToPeak(powerPlot);
+        }
+        if( normStyle ==0){
+            pn = RUtil::normalize(powerPlot);
+        }
+        for(int j =0;j< N;j++){
+            yy[j]=yy[j]+ pn->GetY()[j];
+            xx[j] = pn->GetX()[j];
+        }
+        delete powerPlot;
+        delete pn;
+    }
+    TGraph* gg = new TGraph(N, xx, yy);
+    
+    return gg;
+}
+
+void RUtil::retcr::newThetaPhiMinimizer(double l0Fix[10], TVector3 firstPanelVec, double firstPanelTime, double thetaPhi[3]){
+    double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
+{46.391,-15.198},{31.191,-28.257},
+{-25.454,-31.413},{-35.032,-16.506},
+{25.66,62.593},{41.206,50.988},
+{-20.423,-64.921},{-37.798,-58.042}
+};
+
+    //firstPanelVec.SetMag(firstPanelVec.Mag()+.1);//make sure the plane intersects by putting it a but past (i now do this in planeIntersectionTime 
+
+    TGraph2D *minLoss = new TGraph2D();
+    int cableLength = 80;//m -> 70 m daq to ss 10 m ss to panel
+    double vFact = .7;//cat7 cable   
+    auto l0Delay = cableLength / (RUtil::c_light * vFact);
+    
+    for(int thetaI = 0; thetaI < 80;thetaI++){
+        for(int phiI = 0;phiI < 720;phiI++){
+            double panelDiff = 0;
+            for(int i =0;i<10;i++){
+                TVector3 corePos(panelPos[i][0], panelPos[i][1], 0);
+
+                if (l0Fix[i] > -500){
+                    auto calcTime =  l0Delay+RUtil::retcr::planeIntersectionTime(corePos, firstPanelVec, (thetaI*1),(phiI*.5), firstPanelTime);
+                    auto loss = calcTime - (l0Fix[i]+ 1085.07);
+                    panelDiff+=abs(loss);
+                }
+            }
+            minLoss->SetPoint(minLoss->GetN(),(phiI*.5),(thetaI*1),( panelDiff));   
+        }
+    }
+
+    double *zz = minLoss->GetZ();
+    auto minZ = *min_element(zz, zz+minLoss->GetN()); 
+    auto minIndex = distance(zz, find(zz, zz +minLoss->GetN(), minZ));   
+    auto minTheta = minLoss->GetY()[minIndex];
+    auto minPhi = minLoss->GetX()[minIndex];
+
+        for(int thetaI = 0; thetaI < 8000;thetaI++){
+            if ((thetaI*.01)> (minTheta+5) || (thetaI*.01)< minTheta-5){continue;}
+            
+            for(int phiI = 0;phiI < 7200;phiI++){
+                if ((phiI*.05)> (minPhi+10) || (phiI*.05)< minPhi-10){continue;}
+                double panelDiff = 0;
+                for(int i =0;i<10;i++){
+                    TVector3 corePos(panelPos[i][0], panelPos[i][1], 0);
+                    if (l0Fix[i] > -500){
+                        auto calcTime =  l0Delay+RUtil::retcr::planeIntersectionTime(corePos, firstPanelVec, (thetaI*.01),(phiI*.05), firstPanelTime);
+                        auto loss = calcTime - (l0Fix[i]+ 1085.07);
+                        panelDiff+=abs(loss);
+                    }
+                }
+                minLoss->SetPoint(minLoss->GetN(),(phiI*.05),(thetaI*.01),( panelDiff));
+            }
+    }
+
+    double *zz2 = minLoss->GetZ();
+    auto minZ2 = *min_element(zz2, zz2+minLoss->GetN()); 
+    auto minIndex2 = distance(zz2, find(zz2, zz2 +minLoss->GetN(), minZ2));   
+    auto minTheta2 = minLoss->GetY()[minIndex2];
+    auto minPhi2 = minLoss->GetX()[minIndex2];
+    
+
+        thetaPhi[0] = minTheta2;
+    thetaPhi[1] = minPhi2;
+    thetaPhi[2] = minZ2;
+    //return minPhi2;
+}
+
+vector<TString> RUtil::retcr::getDirList(std::string path){
+    namespace fss = std::filesystem;
+    vector<TString> dirOut;
+    for (const auto & entry : fss::directory_iterator(path)){
+        dirOut.push_back((TString)entry.path());
+    }
+    return dirOut;
+}
+
