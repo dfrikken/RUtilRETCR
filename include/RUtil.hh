@@ -856,26 +856,31 @@ the SVD namespace, which has useful utilities for SVD filtration methods
 
     using Vec3 = std::array<double, 3>;
 
-    void makeFixedArrays(double l0_dt[12], Int_t panel_medium_gain[12], double l0Fix[10], int chargeFix[10]);
+    void removeCWInPlace(double x[], double y[], int N, double freq);
 
+    void getStationsInTrigger(unsigned int n, UInt_t stationsInTrigger[6], UInt_t panelsInTrigger[10]);
+
+    void makeFixedArrays(double l0_dt[12], Int_t panel_medium_gain[12], double l0Fix[10], int chargeFix[10]);
+    void checkCausality(double l0Fix[10], UInt_t panelsInTrigger[10],int aCausal[10]);
+    double maxTheta(int aCausal[10], double l0Fix[10]);
 
     double locMaxInRange(TGraph *ingr, double lowT, double highT);
     double maxInRange(TGraph *ingr, double lowT, double highT);
+
     TGraph * impulsivityGraph(TGraph *ingr);
 
     TGraph * trimForFFT(TGraph *ingr, UInt_t holdoff);
     TGraph * trimForRecord(TGraph *ingr, UInt_t holdoff,int channel);
     //TGraph * butterworth(TGraph *ingr, double freqMin, double freqMax, int order);
 
-
     TGraph * butterworthLowPass(const TGraph* gIn, double fc, int order);
     TGraph * butterworthHighPass(const TGraph* gIn, double fc, int order);
     TGraph * butterworthBandPass(TGraph *ingr, double low, double high, int order);
-    
 
     vector<TGraph*> makeGraphs(Double_t t_d[16384],Double_t allDat[5][16384], Double_t trigger_point_ns, Double_t read_point_ns, Double_t fs);
     TGraph * crossCorrelateWindowed(TGraph * gr1, TGraph * gr2, TGraph *grWindow, double max_delay, double t_low, double t_high);
     TGraph * removeFreqs(TGraph *ingr,double tx_freq, double TxOn = 1, int ref=0);
+    TGraph * removeFreqsNew(TGraph *ingr,double tx_freq, double TxOn);
 
 
     void lightTravelTimeToPoint(TVector3 intPoint, double indRef, double dtArr[4]);
@@ -892,8 +897,8 @@ double findPlaneIntersectionTime(const Vec3& point, const Vec3& planePos0, const
 
     double planeIntersectionTime(TVector3 checkPoint, TVector3 firstPanelPos , double theta, double phi, double firstPanelTime);
     void getCoreSignalToRx(TVector3 checkPoint, TVector3 firstPanelPos , double theta, double phi, double coreSignalToRx[4], double firstPanelTime);
-    double getFirstPanelTime(double l0_dt[12]);
-    TVector3 getFirstPanelTVector3(double l0_dt[12]);
+    double getFirstPanelTime(double l0Fix[10], int aCausal[10]);
+    TVector3 getFirstPanelTVector3(double l0Fix[10], int aCausal[10]);
     double getAirEmissionArrivalTime(int antenna, double theta, double phi, TVector3 firstPanelVec, double firstPanelTime);
 
     vector<TBox*> makePanelEmmisionBoxes( double l0_dt[12] ,int antenna, double highV, double lowV, double indRef, double shiftTime);
@@ -910,8 +915,14 @@ double findPlaneIntersectionTime(const Vec3& point, const Vec3& planePos0, const
 
     vector<TGraph*> delayedForTxBlip(vector<TGraph*> ingr);
     TGraph * addPower(vector<TGraph*> ingr, int normStyle = 0);
-    void newThetaPhiMinimizer(double l0Fix[10], TVector3 firstPanelVec, double firstPanelTime, double thetaPhi[3]);
+    void newThetaPhiMinimizer(double l0Fix[10], double thetaPhi[3], int aCausal[10]);
     vector<TString> getDirList(std::string path);
+
+    void getPanelEmissionTimes(double l0Fix[10] , double indRef, int aCausal[10], double panelEmissionTimes[5][10]);
+
+    void dtToPoint(TVector3 intPoint, double indRef, double dtArr[5], int pairs[10][2]);
+
+
 
   }
 

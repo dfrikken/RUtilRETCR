@@ -4889,6 +4889,65 @@ retcr start
 ######################
 */
 
+void RUtil::retcr::removeCWInPlace(double x[], double y[], int N, double freq){
+  double dt=x[10]-x[9];
+  //int N=ingr->GetN();
+  double sine[N];
+  double cosine[N];
+  double sine_normalized[N];
+  double cosine_normalized[N];
+  double y_normalized[N];
+  RUtil::fillCWArray(sine, N,freq, 1, dt,0);
+  RUtil::fillCWArray(cosine, N,freq, 1,dt, RUtil::deg2Rad(90));
+  auto norm_of_y=RUtil::normalize(y_normalized,N,  y);
+  RUtil::normalize(sine_normalized, N, sine);
+  RUtil::normalize(cosine_normalized, N, cosine);
+  auto coef0=RUtil::dot(y_normalized, sine_normalized, N);
+  auto coef1=RUtil::dot(y_normalized, cosine_normalized, N);
+  double y_temp0[N];
+  double y_temp1[N];
+  double result[N];
+  double sine_scaled[N];
+  double cosine_scaled[N];
+  RUtil::scale(sine_scaled, N, sine_normalized, coef0);
+  RUtil::scale(cosine_scaled, N, cosine_normalized, coef1);
+  RUtil::add(y_temp0,N, y_normalized, sine_scaled, -1);
+  RUtil::add(y_temp1,N, y_temp0, cosine_scaled, -1);
+  RUtil::scale(result,N, y_temp1, norm_of_y);
+  auto ind=RUtil::makeIndices(N,dt);
+    
+    for(int i =0;i<N;i++){
+        y[i] = result[i];
+        //yy.push_back(result[i]);
+    }
+    
+}
+
+void RUtil::retcr::getStationsInTrigger(unsigned int n, UInt_t stationsInTrigger[6], UInt_t panelsInTrigger[10]){
+    unsigned int count = 0;
+    int stationIndex = 0;
+    int panelIndex = 0;
+    while (n) {
+        count += n & 1;
+        //cout<< (n & 1) << endl;
+        stationsInTrigger[stationIndex] = (n & 1);
+        //cout<< stationIndex<<endl;
+        if( stationIndex ==3){
+            stationIndex++;
+            n >>= 1;
+            continue;
+        }
+        panelsInTrigger[panelIndex] = (n & 1);
+        panelIndex++;
+        panelsInTrigger[panelIndex] = (n & 1);
+        panelIndex++;
+        stationIndex++;
+        n >>= 1;
+
+    }
+}
+
+
 void RUtil::retcr::makeFixedArrays(double l0_dt[12], Int_t panel_medium_gain[12], double l0Fix[10], int chargeFix[10]){
     double l0Remove44[10];
     int chargeRemove44[10];
@@ -4907,6 +4966,91 @@ void RUtil::retcr::makeFixedArrays(double l0_dt[12], Int_t panel_medium_gain[12]
         l0Fix[correctInd[i]] = l0Remove44[i];
         chargeFix[correctInd[i]] = chargeRemove44[i];
     }
+}
+
+void RUtil::retcr::checkCausality(double l0Fix[10], UInt_t panelsInTrigger[10],int aCausal[10]){
+
+    double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
+{46.391,-15.198},{31.191,-28.257},
+{-25.454,-31.413},{-35.032,-16.506},
+{25.66,62.593},{41.206,50.988},
+{-20.423,-64.921},{-37.798,-58.042}
+};
+
+    int aCausalCheck[10]={0};
+    int skipAlways[10]={0};
+    for(int i =0;i<10;i++){
+        if( l0Fix[i] < -5000){
+            //aCausalCheck[i] = 1;
+            skipAlways[i] = 1;
+            //continue;
+        }
+        if(panelsInTrigger[i] ==0){
+            skipAlways[i] = 1;
+        }
+    }
+    
+    for(int i =0;i<10;i++){
+        if(skipAlways[i] ==1){continue;}
+        //cout<<i<<endl;
+        for(int j =i+1;j<10;j++){
+            if(skipAlways[j] ==1){continue;}
+    
+            auto dist = sqrt( pow(panelPos[i][0]-panelPos[j][0],2) + pow(panelPos[i][1]-panelPos[j][1],2));
+            auto travelTime = 11+(dist/(RUtil::c_light/1.4));
+            auto diffTime = abs(l0Fix[i]-l0Fix[j]);
+            //printf("%d to %d diffTime %.1f max %.1f\n",i,j, diffTime, travelTime  );
+            if (diffTime > travelTime){
+                //printf("%d to %d acausal\n",i,j);
+                aCausalCheck[i]+=1;
+                aCausalCheck[j]+=1;
+            }
+        }
+    }
+    auto maxC = *max_element(aCausalCheck, aCausalCheck+10);
+    while(maxC > 1){
+        for(int i =0;i<10;i++){
+            if( aCausalCheck[i] ==0){continue;}
+        aCausalCheck[i] = aCausalCheck[i] - 1;
+            
+    }
+        maxC = *max_element(aCausalCheck, aCausalCheck+10);
+    }
+    
+    auto minC = *min_element(aCausalCheck, aCausalCheck+10);
+    for(int i =0;i<10;i++){
+        aCausal[i] = aCausalCheck[i] - minC+skipAlways[i];
+    }
+
+}
+
+double RUtil::retcr::maxTheta(int aCausal[10], double l0Fix[10]){
+    double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
+{46.391,-15.198},{31.191,-28.257},
+{-25.454,-31.413},{-35.032,-16.506},
+{25.66,62.593},{41.206,50.988},
+{-20.423,-64.921},{-37.798,-58.042}
+};
+    double minL0 = 0;
+    double maxL0 = -10000;
+    int minMaxIndex[2];
+    for(int i =0;i<10;i++){
+        if(aCausal[i] !=0){continue;}
+        if (l0Fix[i] < minL0){
+            minL0 = l0Fix[i];
+            minMaxIndex[0] = i;
+        }
+        if(l0Fix[i] > maxL0){
+            maxL0 = l0Fix[i];
+            minMaxIndex[1] = i;
+        }
+       // cout<<i<<","<<l0Fix[i]<<endl;
+    }
+    auto dist = sqrt( pow(panelPos[minMaxIndex[0]][0]-panelPos[minMaxIndex[1]][0],2) + pow(panelPos[minMaxIndex[0]][1]-panelPos[minMaxIndex[1]][1],2));
+    auto maxDist = (abs(minL0 - maxL0)-22) * (RUtil::c_light/1.4);
+    //cout<< dist<<","<<abs(minL0 - maxL0)<<","<<maxDist<<endl;
+    auto maxThetaVal =  90 - RUtil::rad2Deg(TMath::ATan(maxDist/dist));
+    return maxThetaVal;
 }
 
 double RUtil::retcr::locMaxInRange(TGraph *ingr, double lowT, double highT){
@@ -4965,12 +5109,12 @@ double RUtil::retcr::maxInRange(TGraph *ingr, double lowT, double highT){
 
 TGraph *RUtil::retcr::impulsivityGraph(TGraph *ingr){
     auto powerPlot = RUtil::power(ingr);
-    auto normed = RUtil::normalize(ingr);
+    auto normed = RUtil::normalize(powerPlot);
 
     TGraph *runningSum  = new TGraph();
     double totalVal = 0;
     for(int i =0;i< ingr->GetN() ;i++){
-        totalVal+= ingr->GetY()[i];
+        totalVal+= normed->GetY()[i];
         runningSum->SetPoint(i, ingr->GetX()[i], totalVal);
     }
 
@@ -5410,6 +5554,38 @@ TGraph* RUtil::retcr::removeFreqs(TGraph *ingr,double tx_freq, double TxOn, int 
     return outG;
 }
 
+TGraph *RUtil::retcr::removeFreqsNew(TGraph *ingr,double tx_freq, double TxOn){
+    //TGraph outG = new TGraph();
+    int N = ingr->GetN();
+    auto xx = ingr->GetX();
+    auto yy = ingr->GetY();
+    double freqsToKnock[2] = {tx_freq, 0.36864};
+
+    if(TxOn!=0){
+        for(int i =0;i<2;i++){
+            for(int j =1;j<4;j++){
+                RUtil::retcr::removeCWInPlace(xx,yy,N,freqsToKnock[i]*j);
+            }
+        }
+        TGraph *outgr = new TGraph(N, xx, yy);
+        return outgr;
+    }
+    if(TxOn ==0){
+
+        for(int j =1;j<4;j++){
+           RUtil::retcr::removeCWInPlace(xx,yy,N,freqsToKnock[1]*j);
+        }
+
+        TGraph *outgr = new TGraph(N, xx, yy);
+        return outgr;
+    }
+
+    TGraph *outgr = new TGraph();
+    return outgr;
+    
+}
+
+
 void RUtil::retcr::lightTravelTimeToPoint(TVector3 intPoint, double indRef, double dtArr[5]){
     double rxPos[5][3] =  { {26.71	,14.841,-10},{-0.138, -30.367,-10},{-46.594,11.166,-10},{-26.329,15.103,-10},{1.205,14.561,-1}};
 
@@ -5599,35 +5775,24 @@ void RUtil::retcr::getCoreSignalToRx(TVector3 checkPoint, TVector3 firstPanelPos
 
 }
 
-double RUtil::retcr::getFirstPanelTime(double l0_dt[12]){
-    double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
-{46.391,-15.198},{31.191,-28.257},
-{-25.454,-31.413},{-35.032,-16.506},
-{25.66,62.593},{41.206,50.988},
-{-20.423,-64.921},{-37.798,-58.042}
-};
-
-    double l0Remove44[10];
-    int ind = 0;
-    for(int i =0;i<12;i++){
-        if(i ==6 or i==7){continue;}
-        l0Remove44[ind] = l0_dt[i];
-        ind++;
-    }
-    
-    double l0Fix[10];
-    int correctInd[10] = {0,1,3,2,4,5,7,6,9,8};
-    
+double RUtil::retcr::getFirstPanelTime(double l0Fix[10], int aCausal[10]){
+    double minL0 = 0;
+    double maxL0 = -10000;
+    int minMaxIndex[2];
     for(int i =0;i<10;i++){
-        l0Fix[correctInd[i]] = l0Remove44[i];
-        if(l0Remove44[i] < -500){ //if the l0 is outside the causal window make it very large and postive to be easily ignored
-            l0Fix[correctInd[i]] = 10000; 
+        if(aCausal[i] !=0){continue;}
+        if (l0Fix[i] < minL0){
+            minL0 = l0Fix[i];
+            minMaxIndex[0] = i;
         }
+        if(l0Fix[i] > maxL0){
+            maxL0 = l0Fix[i];
+            minMaxIndex[1] = i;
+        }
+       // cout<<i<<","<<l0Fix[i]<<endl;
     }
-    
-    auto minl0 = *min_element( l0Fix, l0Fix+10);
-    
-    int firstPanelHit = distance(l0Fix, find(l0Fix,l0Fix+10,minl0));
+
+    int firstPanelHit = distance(l0Fix, find(l0Fix,l0Fix+10,minL0));
 
     int cableLength = 80;//m -> 70 m daq to ss 10 m ss to panel
     double vFact = .7;//cat7 cable   
@@ -5638,7 +5803,7 @@ double RUtil::retcr::getFirstPanelTime(double l0_dt[12]){
     return 1085.0694+l0Fix[firstPanelHit] - l0Delay;
 }
 
-TVector3 RUtil::retcr::getFirstPanelTVector3(double l0_dt[12]){
+TVector3 RUtil::retcr::getFirstPanelTVector3(double l0Fix[10], int aCausal[10]){
     double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
 {46.391,-15.198},{31.191,-28.257},
 {-25.454,-31.413},{-35.032,-16.506},
@@ -5646,27 +5811,24 @@ TVector3 RUtil::retcr::getFirstPanelTVector3(double l0_dt[12]){
 {-20.423,-64.921},{-37.798,-58.042}
 };
 
-    double l0Remove44[10];
-    int ind = 0;
-    for(int i =0;i<12;i++){
-        if(i ==6 or i==7){continue;}
-        l0Remove44[ind] = l0_dt[i];
-        ind++;
-    }
-    
-    double l0Fix[10];
-    int correctInd[10] = {0,1,3,2,4,5,7,6,9,8};
-    
+    double minL0 = 0;
+    double maxL0 = -10000;
+    int minMaxIndex[2];
     for(int i =0;i<10;i++){
-        l0Fix[correctInd[i]] = l0Remove44[i];
-        if(l0Remove44[i] < -500){ //if the l0 is outside the causal window make it very large and postive to be easily ignored
-            l0Fix[correctInd[i]] = 10000; 
+        if(aCausal[i] !=0){continue;}
+        if (l0Fix[i] < minL0){
+            minL0 = l0Fix[i];
+            minMaxIndex[0] = i;
         }
+        if(l0Fix[i] > maxL0){
+            maxL0 = l0Fix[i];
+            minMaxIndex[1] = i;
+        }
+       // cout<<i<<","<<l0Fix[i]<<endl;
     }
+   
     
-    auto minl0 = *min_element( l0Fix, l0Fix+10);
-    
-    int firstPanelHit = distance(l0Fix, find(l0Fix,l0Fix+10,minl0 ));
+    int firstPanelHit = distance(l0Fix, find(l0Fix,l0Fix+10,minL0 ));
     
     
     TVector3 toFirstPanelHit( panelPos[firstPanelHit][0], panelPos[firstPanelHit][1],0);
@@ -6073,16 +6235,19 @@ vector<TGraph*> RUtil::retcr::rollingWindow(TGraph *g){
 }
 
 vector<TGraph*> RUtil::retcr::delayedForTxBlip(vector<TGraph*> ingr){
-    double delays[] = { 0.0000000, 6.0000000, -224.00000,0.0000000, 0.0000000 };
+    double delays[] = { 6.79, 0, -231.51000,5.81, 146.73 };
 
     vector<TGraph*> delayed;
 
     for(int i =0;i<5;i++){
         auto dd = RUtil::delayGraph( ingr[i], delays[i]);
-        auto zp = RUtil::zeroPad(dd,2000,1);
-        auto gg = RUtil::getChunkOfGraph(zp, 10, 2200,0);
+        
+        auto zpr = RUtil::zeroPad(dd,2000,1);
+        //cout<< zpr->GetX()[0]<<endl;
+        auto gg = RUtil::getChunkOfGraph(zpr, delays[4], 2200,0);
         delete dd;
-        delete zp;
+        
+        delete zpr;
         delayed.push_back(gg);
         //delayed.push_back(dd);
     }
@@ -6119,72 +6284,70 @@ TGraph *RUtil::retcr::addPower(vector<TGraph*> ingr, int normStyle){
     return gg;
 }
 
-void RUtil::retcr::newThetaPhiMinimizer(double l0Fix[10], TVector3 firstPanelVec, double firstPanelTime, double thetaPhi[3]){
+void RUtil::retcr::newThetaPhiMinimizer(double l0Fix[10], double thetaPhi[3], int aCausal[10]){
     double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
-{46.391,-15.198},{31.191,-28.257},
-{-25.454,-31.413},{-35.032,-16.506},
-{25.66,62.593},{41.206,50.988},
-{-20.423,-64.921},{-37.798,-58.042}
-};
-
-    //firstPanelVec.SetMag(firstPanelVec.Mag()+.1);//make sure the plane intersects by putting it a but past (i now do this in planeIntersectionTime 
-
-    TGraph2D *minLoss = new TGraph2D();
-    int cableLength = 80;//m -> 70 m daq to ss 10 m ss to panel
-    double vFact = .7;//cat7 cable   
-    auto l0Delay = cableLength / (RUtil::c_light * vFact);
+    {46.391,-15.198},{31.191,-28.257},
+    {-25.454,-31.413},{-35.032,-16.506},
+    {25.66,62.593},{41.206,50.988},
+    {-20.423,-64.921},{-37.798,-58.042}
+    };
     
-    for(int thetaI = 0; thetaI < 80;thetaI++){
-        for(int phiI = 0;phiI < 720;phiI++){
+    TGraph2D *minLoss = new TGraph2D();
+    
+    double theta = 0;
+    double phi =0;
+    
+    double minL0 = 0;
+    double maxL0 = -10000;
+    int minMaxIndex[2];
+    for(int i =0;i<10;i++){
+        if(aCausal[i] !=0){continue;}
+        if (l0Fix[i] < minL0){
+            minL0 = l0Fix[i];
+            minMaxIndex[0] = i;
+        }
+        if(l0Fix[i] > maxL0){
+            maxL0 = l0Fix[i];
+            minMaxIndex[1] = i;
+        }
+       // cout<<i<<","<<l0Fix[i]<<endl;
+    }
+    auto yInt = l0Fix[minMaxIndex[0]];
+    TVector3 fpv(panelPos[minMaxIndex[0]][0], panelPos[minMaxIndex[0]][1],0);
+    //g->SetPoint(NN, RUtil::retcr::planeIntersectionTime(corePos, fpv, thetaPhi[0], thetaPhi[1], 0),l0Fix[i]);
+    //y = m*x +b
+    auto maxThetaVal = RUtil::retcr::maxTheta(aCausal, l0Fix);
+    double panelLoss[10];
+    while( phi < 360){
+        phi+=.5;
+        double theta =0;
+        while( theta < maxThetaVal){
+            theta+=.5;
             double panelDiff = 0;
             for(int i =0;i<10;i++){
                 TVector3 corePos(panelPos[i][0], panelPos[i][1], 0);
-
-                if (l0Fix[i] > -500){
-                    auto calcTime =  l0Delay+RUtil::retcr::planeIntersectionTime(corePos, firstPanelVec, (thetaI*1),(phiI*.5), firstPanelTime);
-                    auto loss = calcTime - (l0Fix[i]+ 1085.07);
-                    panelDiff+=abs(loss);
-                }
-            }
-            minLoss->SetPoint(minLoss->GetN(),(phiI*.5),(thetaI*1),( panelDiff));   
+                if( aCausal[i] !=0){continue;}
+                auto expectedY = RUtil::retcr::planeIntersectionTime(corePos, fpv, theta, phi, 0) + yInt;
+                
+               //cout<< l0Fix[i]<<","<<RUtil::retcr::planeIntersectionTime(corePos, fpv, theta, phi, 0)<<","<<expectedY<<endl;
+                panelDiff+=abs(expectedY - l0Fix[i]);
+                panelLoss[i]+=abs(expectedY - l0Fix[i]);
+            } 
+            //printf("theta %f phi %f panelDiff %f\n", theta, phi, panelDiff);
+            minLoss->SetPoint(minLoss->GetN(), phi,theta,abs(panelDiff));
         }
     }
-
+    
     double *zz = minLoss->GetZ();
     auto minZ = *min_element(zz, zz+minLoss->GetN()); 
     auto minIndex = distance(zz, find(zz, zz +minLoss->GetN(), minZ));   
     auto minTheta = minLoss->GetY()[minIndex];
     auto minPhi = minLoss->GetX()[minIndex];
-
-        for(int thetaI = 0; thetaI < 8000;thetaI++){
-            if ((thetaI*.01)> (minTheta+5) || (thetaI*.01)< minTheta-5){continue;}
-            
-            for(int phiI = 0;phiI < 7200;phiI++){
-                if ((phiI*.05)> (minPhi+10) || (phiI*.05)< minPhi-10){continue;}
-                double panelDiff = 0;
-                for(int i =0;i<10;i++){
-                    TVector3 corePos(panelPos[i][0], panelPos[i][1], 0);
-                    if (l0Fix[i] > -500){
-                        auto calcTime =  l0Delay+RUtil::retcr::planeIntersectionTime(corePos, firstPanelVec, (thetaI*.01),(phiI*.05), firstPanelTime);
-                        auto loss = calcTime - (l0Fix[i]+ 1085.07);
-                        panelDiff+=abs(loss);
-                    }
-                }
-                minLoss->SetPoint(minLoss->GetN(),(phiI*.05),(thetaI*.01),( panelDiff));
-            }
-    }
-
-    double *zz2 = minLoss->GetZ();
-    auto minZ2 = *min_element(zz2, zz2+minLoss->GetN()); 
-    auto minIndex2 = distance(zz2, find(zz2, zz2 +minLoss->GetN(), minZ2));   
-    auto minTheta2 = minLoss->GetY()[minIndex2];
-    auto minPhi2 = minLoss->GetX()[minIndex2];
-    
-
-        thetaPhi[0] = minTheta2;
-    thetaPhi[1] = minPhi2;
-    thetaPhi[2] = minZ2;
+    thetaPhi[0] = minTheta;
+    thetaPhi[1] = minPhi;
+    thetaPhi[2] = minZ;
     //return minPhi2;
+   delete minLoss;
 }
 
 vector<TString> RUtil::retcr::getDirList(std::string path){
@@ -6195,4 +6358,94 @@ vector<TString> RUtil::retcr::getDirList(std::string path){
     }
     return dirOut;
 }
+
+void RUtil::retcr::getPanelEmissionTimes( double l0Fix[10] , double indRef, int aCausal[10], double panelEmissionTimes[5][10]){
+
+
+    double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
+        {46.391,-15.198},{31.191,-28.257},
+        {-25.454,-31.413},{-35.032,-16.506},
+        {25.66,62.593},{41.206,50.988},
+        {-20.423,-64.921},{-37.798,-58.042}
+        };
+    
+
+    double rxPos[5][3] =  { {26.71	,14.841,-10},{-0.138, -30.367,-10},{-46.594	,11.166,-10},{-26.329,15.103,-10},{1.205,14.561,-1}};
+
+     double rxToPanel[5][10];
+    for(int ant = 0;ant<5;ant++){
+        for(int i =0;i<10;i++){
+            rxToPanel[ant][i] = sqrt( pow(panelPos[i][0]-rxPos[ant][0],2) + pow(panelPos[i][1]-rxPos[ant][1],2) + pow(rxPos[ant][2]-0,2));
+            
+        }
+    }
+    int cableLength = 80;//m -> 70 m daq to ss 10 m ss to panel
+    double vFact = .7;//cat7 cable   
+    //RUtil::c_light m/ns
+    auto l0Delay = cableLength / (RUtil::c_light * vFact);
+    int rxCableLengths[5] = {50,50,86,50,30};
+    //int rxCableLengths[5] = {50,50,70,50,30};
+    double rxVFact = .85;
+    
+    double rxDelay[5];
+    
+    for(int i =0;i<5;i++){
+        rxDelay[i] = rxCableLengths[i] / (RUtil::c_light * rxVFact);
+    }
+
+    for(int ant = 0;ant<5;ant++){
+        for(int i =0;i<10;i++){
+            if(aCausal[i] !=0){
+                panelEmissionTimes[ant][i] = -1000;
+                continue;
+            }
+            auto trigTime = (1085 - l0Delay) + l0Fix[i];
+            auto rfToRx = rxToPanel[ant][i]/(RUtil::c_light/indRef);
+            panelEmissionTimes[ant][i] = trigTime + rfToRx + rxDelay[ant];
+
+        }
+    }    
+}
+
+void RUtil::retcr::dtToPoint(TVector3 intPoint, double indRef, double dtArr[5], int pairs[10][2]){
+    double rxPos[5][3] =  { {26.71	,14.841,-10},{-0.138, -30.367,-10},{-46.594,11.166,-10},{-26.329,15.103,-10},{1.205,14.561,-1}};
+
+    int rxCableLengths[5] = {50,50,86,50,30};
+    //int rxCableLengths[5] = {50,50,70,50,30};
+    double rxVFact = .85;
+    
+    double cablePropTime[5];
+    
+    for(int i =0;i<5;i++){
+        cablePropTime[i] = rxCableLengths[i] / (RUtil::c_light * rxVFact);
+    }
+    vector<TVector3> rxVect;
+
+    for(int i =0;i<5;i++){
+        TVector3 mp(rxPos[i][0], rxPos[i][1], rxPos[i][2]);
+        rxVect.push_back(mp);
+    }
+
+    double timeToPt[5];
+    for(int i =0;i<5;i++){
+        TVector3 dRx = intPoint - rxVect[i];
+        //dRx.Print();
+        //distToPt.push_back(dRx);
+        //cout<< dRx.Mag()/(RUtil::c_light/indRef)<<endl;
+        timeToPt[i] = dRx.Mag()/(RUtil::c_light/indRef);
+    }
+
+    int ind=0;
+    for(int i =0;i<5;i++){
+        for(int j =i+1;j<5;j++){
+            dtArr[ind] = -1*((timeToPt[j]+cablePropTime[j]) - (timeToPt[i]+cablePropTime[i]));//timeToPt[j] - timeToPt[i];
+            pairs[ind][0] = j;
+            pairs[ind][1] = i;
+            //printf("%d %d dt %f\n", j,i,(timeToPt[j]+cablePropTime[j]) - (timeToPt[i]+cablePropTime[i]));
+                ind++;
+        }
+    }
+    
+}
+
 
