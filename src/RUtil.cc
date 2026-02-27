@@ -4889,6 +4889,20 @@ retcr start
 ######################
 */
 
+void RUtil::retcr::addGraphLabels(TGraph *ingr, int ant){
+    int colorVal[5] = {kBlue,kCyan+1,6,kViolet,kGreen+1};
+    ingr->SetName(TString::Format("CH %d", ant));
+    ingr->SetTitle(TString::Format("CH %d", ant));
+    ingr->GetYaxis()->SetTitle("ADC counts");
+    ingr->GetXaxis()->SetTitle("time (ns)");
+    ingr->SetLineColor(colorVal[ant]);
+    ingr->SetMarkerColor(colorVal[ant]);
+    ingr->SetLineWidth(1);
+
+}
+
+
+
 void RUtil::retcr::removeCWInPlace(double x[], double y[], int N, double freq){
   double dt=x[10]-x[9];
   //int N=ingr->GetN();
@@ -5047,7 +5061,7 @@ double RUtil::retcr::maxTheta(int aCausal[10], double l0Fix[10]){
        // cout<<i<<","<<l0Fix[i]<<endl;
     }
     auto dist = sqrt( pow(panelPos[minMaxIndex[0]][0]-panelPos[minMaxIndex[1]][0],2) + pow(panelPos[minMaxIndex[0]][1]-panelPos[minMaxIndex[1]][1],2));
-    auto maxDist = (abs(minL0 - maxL0)-22) * (RUtil::c_light/1.4);
+    auto maxDist = (abs(minL0 - maxL0)-11) * (RUtil::c_light/1.4);
     //cout<< dist<<","<<abs(minL0 - maxL0)<<","<<maxDist<<endl;
     auto maxThetaVal =  90 - RUtil::rad2Deg(TMath::ATan(maxDist/dist));
     return maxThetaVal;
@@ -5129,7 +5143,7 @@ TGraph *RUtil::retcr::impulsivityGraph(TGraph *ingr){
     
 }
 
-
+//old event record timing. dont use
 TGraph* RUtil::retcr::trimForFFT(TGraph *ingr, UInt_t holdoff){
     auto xx = ingr->GetX();
     double highT =  ingr->GetX()[16384/2] + (holdoff*(1/0.36864));
@@ -5152,22 +5166,16 @@ TGraph* RUtil::retcr::trimForRecord(TGraph *ingr, UInt_t holdoff,int channel){
     int colorVal[5] = {kBlue,kCyan+1,6,kViolet,kGreen+1};
     auto dt = ingr->GetX()[10] - ingr->GetX()[9];
 
-    if (holdoff > 400){ holdoff = 400;}
-    double highT =  ingr->GetX()[16384/2] + (holdoff*(1/0.36864));
-    double lowT =  1692.7083;
+    double lowT =  ingr->GetX()[16383] - 2*(holdoff*(1/0.36864));
 
     TGraph *g = new TGraph();
 
-    for(int i =0;i< ingr->GetN();i++){
+    for(int i =0;i< ingr->GetN()-1;i++){
         if( ingr->GetX()[i] >= lowT){
             g->SetPoint(g->GetN(), ingr->GetX()[i] - lowT, ingr->GetY()[i]);
         }
     }
 
-    while(g->GetN() < 6400){
-        g->SetPoint( g->GetN(), g->GetX()[g->GetN()-1] + dt,0);
-    }
-    
     g->SetName(TString::Format("CH %d", channel));
     g->SetTitle(TString::Format("CH %d", channel));
     g->GetYaxis()->SetTitle("ADC counts");
@@ -5425,25 +5433,16 @@ TGraph* RUtil::retcr::butterworth(TGraph *ingr, double freqMin, double freqMax, 
 
 vector<TGraph*> RUtil::retcr::makeGraphs(Double_t t_d[16384],Double_t allDat[5][16384], Double_t trigger_point_ns, Double_t read_point_ns, Double_t fs){
     vector<TGraph*> graphs;
+    
     for(int ant =0;ant<5;ant++){
-        //if (ant ==2){continue;}
         auto gr=new TGraph(16384, t_d, allDat[ant]);
-        auto grRoll = RUtil::roll(gr,trigger_point_ns*fs - (16384/2) );
+        auto grRoll = RUtil::roll(gr,read_point_ns*fs - 16384 );
 
-        //auto chunk = RUtil::getNSamplesFrom(grRoll,grRoll->GetX()[16384/2-3200], 6400,1 );
         graphs.push_back(grRoll);
-        //delete grRoll;
         delete gr;
         gr = NULL;
     }
 
-    //auto gr=new TGraph(16384, t_d, allDat[2]);
-    //auto grRoll = RUtil::roll(gr,trigger_point_ns*fs - (16384/2) );
-
-    //auto chunk = RUtil::getNSamplesFrom(grRoll,grRoll->GetX()[16384/2-3200], 6400,1 );
-    //graphs.push_back(grRoll);
-    //delete gr;dt
-    //gr = NULL;
     
   return graphs;
     
@@ -5602,7 +5601,7 @@ void RUtil::retcr::lightTravelTimeToPoint(TVector3 intPoint, double indRef, doub
     }
 }
 
-void RUtil::retcr::getCoreSignalToRxWithRef(double xVal, double yVal, double l0_dt[12], double theta, double coreSignalToRx[4]){
+void RUtil::retcr::getCoreSignalToRxWithRef(double xVal, double yVal, double l0_dt[12], double theta, double coreSignalToRx[4], double triggerTime){
 
 
     double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
@@ -5655,7 +5654,7 @@ void RUtil::retcr::getCoreSignalToRxWithRef(double xVal, double yVal, double l0_
     double rxVFact = .85;
     auto rxDelay = rxCableLength / (RUtil::c_light * rxVFact);
     
-    auto coreImpactTime = 1085 + (minl0 - l0Delay) + coreImpactTimeDiff ;
+    auto coreImpactTime = triggerTime + (minl0 - l0Delay) + coreImpactTimeDiff ;
     //double coreSignalToRx[3] ;
     
         for(int i =0;i<3;i++){
@@ -5775,7 +5774,7 @@ void RUtil::retcr::getCoreSignalToRx(TVector3 checkPoint, TVector3 firstPanelPos
 
 }
 
-double RUtil::retcr::getFirstPanelTime(double l0Fix[10], int aCausal[10]){
+double RUtil::retcr::getFirstPanelTime(double l0Fix[10], int aCausal[10], double triggerTime){
     double minL0 = 0;
     double maxL0 = -10000;
     int minMaxIndex[2];
@@ -5800,7 +5799,7 @@ double RUtil::retcr::getFirstPanelTime(double l0Fix[10], int aCausal[10]){
     auto l0Delay = cableLength / (RUtil::c_light * vFact);
     
 
-    return 1085.0694+l0Fix[firstPanelHit] - l0Delay;
+    return triggerTime+l0Fix[firstPanelHit] - l0Delay;
 }
 
 TVector3 RUtil::retcr::getFirstPanelTVector3(double l0Fix[10], int aCausal[10]){
@@ -5875,7 +5874,7 @@ double RUtil::retcr::getAirEmissionArrivalTime(int antenna, double theta, double
     
 }
 
-vector<TBox*> RUtil::retcr::makePanelEmmisionBoxes( double l0_dt[12] ,int antenna, double highV, double lowV, double indRef, double shiftTime){
+vector<TBox*> RUtil::retcr::makePanelEmmisionBoxes( double l0_dt[12] ,int antenna, double highV, double lowV, double indRef, double shiftTime, double triggerTime){
 
 
     double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
@@ -5936,7 +5935,7 @@ vector<TBox*> RUtil::retcr::makePanelEmmisionBoxes( double l0_dt[12] ,int antenn
     //for(int ant = 0;ant<3;ant++){
             //cout<< ant<<endl;
             for(int i =0;i<10;i++){
-                auto trigTime = (1085 - l0Delay) + l0Fix[i];
+                auto trigTime = (triggerTime - l0Delay) + l0Fix[i];
                 auto rfToRx = rxToPanel[antenna][i]/(RUtil::c_light/indRef);
 
                 if( (trigTime + rfToRx + rxDelay +shiftTime > 0) && (trigTime + rfToRx + rxDelay +shiftTime < 2100)){
@@ -5960,7 +5959,7 @@ vector<TBox*> RUtil::retcr::makePanelEmmisionBoxes( double l0_dt[12] ,int antenn
     
 }
 
-    void RUtil::retcr::minThetaPhi(double l0Fix[10], TVector3 firstPanelVec, double firstPanelTime, double thetaPhi[3]){
+    void RUtil::retcr::minThetaPhi(double l0Fix[10], TVector3 firstPanelVec, double firstPanelTime, double thetaPhi[3], double triggerTime){
 
     double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
 {46.391,-15.198},{31.191,-28.257},
@@ -5983,7 +5982,7 @@ vector<TBox*> RUtil::retcr::makePanelEmmisionBoxes( double l0_dt[12] ,int antenn
                 TVector3 corePos(panelPos[i][0], panelPos[i][1], 0);
                 if (l0Fix[i] > -500){
                     auto calcTime =  l0Delay+RUtil::retcr::planeIntersectionTime(corePos, firstPanelVec, (thetaI*.1),(phiI*.5), firstPanelTime);
-                    auto loss = calcTime - (l0Fix[i]+ 1085.07);
+                    auto loss = calcTime - (l0Fix[i]+ triggerTime);
                     panelDiff+=abs(loss);
               
     
@@ -6359,7 +6358,7 @@ vector<TString> RUtil::retcr::getDirList(std::string path){
     return dirOut;
 }
 
-void RUtil::retcr::getPanelEmissionTimes( double l0Fix[10] , double indRef, int aCausal[10], double panelEmissionTimes[5][10]){
+void RUtil::retcr::getPanelEmissionTimes( double l0Fix[10] , double indRef, int aCausal[10], double panelEmissionTimes[5][10], double triggerTime){
 
 
     double panelPos [10][2] = {{-3.308	,40.268},{11.547,39.701},
@@ -6399,7 +6398,7 @@ void RUtil::retcr::getPanelEmissionTimes( double l0Fix[10] , double indRef, int 
                 panelEmissionTimes[ant][i] = -1000;
                 continue;
             }
-            auto trigTime = (1085 - l0Delay) + l0Fix[i];
+            auto trigTime = (triggerTime - l0Delay) + l0Fix[i];
             auto rfToRx = rxToPanel[ant][i]/(RUtil::c_light/indRef);
             panelEmissionTimes[ant][i] = trigTime + rfToRx + rxDelay[ant];
 
